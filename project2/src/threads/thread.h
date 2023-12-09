@@ -4,6 +4,9 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+//modified
+#include "threads/synch.h"
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -17,6 +20,7 @@ enum thread_status
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
+
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
 /* Thread priorities. */
@@ -80,8 +84,14 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-struct thread
-  {
+
+struct signal{
+	int signum;
+	void (*sig_handler)(void);
+};
+
+
+struct thread{
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
@@ -96,16 +106,38 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    //Making Child list!!!
+
+	struct thread *parent;
+	struct list child;
+	struct list_elem child_elem;
+
+	struct semaphore child_lock;
+	struct semaphore memory_lock;
+	struct semaphore exec_lock;	
+	
+	//Project 2 User program
+	struct file *fdt[64];
+	int next_fd;
+
+	struct signal *save_signal[10];
+
+	int exit_status;
+
+
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-  };
+};
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
+//extra
+void sendsig_thread(tid_t pid, int signum);
+
 
 void thread_init (void);
 void thread_start (void);

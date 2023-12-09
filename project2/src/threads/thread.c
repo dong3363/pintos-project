@@ -11,6 +11,9 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+
+#include "filesys/file.h"
+
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -70,6 +73,27 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+
+
+
+void sendsig_thread (tid_t tid, int signum){
+	struct list_elem *e;
+	for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)){
+		struct thread *t = list_entry(e, struct thread, allelem);
+		if (t->tid == tid){
+			for(int i=0; i<10; i++){
+				if (t->save_signal[i] == NULL)
+					return;
+				if (t->save_signal[i]->signum == signum){
+					printf("Signum: %d, Action: %p\n", signum, t->save_signal[i]->sig_handler);
+					return;
+				}
+			}
+		}
+	}
+	return ;
+}	
+
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -170,6 +194,9 @@ thread_create (const char *name, int priority,
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
+
+  	
+
   tid_t tid;
 
   ASSERT (function != NULL);
@@ -178,6 +205,7 @@ thread_create (const char *name, int priority,
   t = palloc_get_page (PAL_ZERO);
   if (t == NULL)
     return TID_ERROR;
+
 
   /* Initialize thread. */
   init_thread (t, name, priority);
@@ -200,7 +228,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-
+  thread_yield();
   return tid;
 }
 
@@ -467,6 +495,32 @@ init_thread (struct thread *t, const char *name, int priority)
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
+#ifdef USERPROG
+  list_init(&(t->child));
+  list_push_back(&(running_thread()->child), &(t->child_elem));
+
+  sema_init(&(t->child_lock), 0);
+  sema_init(&(t->memory_lock), 0);
+  sema_init(&(t->exec_lock), 0);
+
+  //modified
+  t->parent = running_thread();
+
+  // File Descriptor Table
+  for (int i =0; i<64; i++){
+	t->fdt[i] = NULL;
+  }
+  t->fdt[0] = 1;
+  t->fdt[1] = 2;
+  t->next_fd = 2;
+
+  for (int j =0; j<10; j++){
+	t->save_signal[j]=NULL;
+  }
+
+#endif
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

@@ -18,6 +18,9 @@ enum
     SYS_SEEK,                   /* Change position in a file. */
     SYS_TELL,                   /* Report current position in a file. */
     SYS_CLOSE,                  /* Close a file. */
+    SYS_SIGACTION,              /* Register an signal handler */
+    SYS_SENDSIG,                /* Send a signal */
+    SYS_YIELD,                  /* Yield current thread */
 
     /* Project 3 and optionally project 4. */
     SYS_MMAP,                   /* Map a file into memory. */

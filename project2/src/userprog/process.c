@@ -17,6 +17,8 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+//modified
+#include "lib/user/syscall.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -38,10 +40,32 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  char* save_ptr;
+  char* token = strtok_r(file_name, " ", &save_ptr);
+
+  if (filesys_open(token)==NULL){
+	palloc_free_page(fn_copy);
+	return -1;
+  }
+
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  struct thread *cur = thread_current();
+  tid = thread_create (token, PRI_DEFAULT, start_process, fn_copy);
+  sema_down (& cur -> exec_lock);
+
+  if (tid == TID_ERROR){
+    palloc_free_page (fn_copy);
+  }
+
+  struct list_elem *e = NULL;
+  struct thread *child_temp = NULL;
+
+  for (e = list_begin(& (cur -> child)); e != list_end(&(cur->child)); e = list_next(e)){
+	child_temp = list_entry (e, struct thread, child_elem);
+	if ( child_temp -> exit_status == -1 )
+		return process_wait (tid);
+  }
+
   return tid;
 }
 
@@ -59,13 +83,47 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  
+  //parse to token!!
+  char file_name_use[128];
+  
+  strlcpy(file_name_use, file_name, strlen(file_name)+1);
+  int num_token = 0;
+  char *token, *save_ptr;
+
+  for (token = strtok_r (file_name_use, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)){
+	num_token ++;
+  }
+  
+  char **token_array = (char **)malloc(sizeof(char *)* num_token);
+  strlcpy(file_name_use, file_name, strlen(file_name) + 1);
+  int i = 0;
+  for (token = strtok_r (file_name_use, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)){
+	token_array[i] = token;
+	i++;
+  }
+  
+  success = load (token_array[0], &if_.eip, &if_.esp);
+  struct thread *cur = thread_current();
+  if(success){
+	argument_stack(token_array, num_token, &if_.esp);
+	
+	free(token_array);
+  }
+
+  palloc_free_page (file_name);
+  //wake-up the sema_down while loop in process execute
+  sema_up (& cur->parent->exec_lock);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  //palloc_free_page (file_name);
+  if (!success){
+	//free(file_name_use);
+	free(token_array);
+	exit(-1); 
+  }
 
+  //hex_dump(if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -75,6 +133,58 @@ start_process (void *file_name_)
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
 }
+
+void argument_stack(char **parse, int count, void **esp){
+
+  int stack_len = 0;
+  int token_len;
+
+  for (int i = count-1; i>=0; i--){
+	token_len = strlen(parse[i])+1;
+	stack_len += token_len;
+	*esp -= token_len;
+	strlcpy(*esp, parse[i], token_len);
+	parse[i] = *esp;
+  }
+
+  //4Byte align
+  if (stack_len % 4 != 0){
+	int align = 4 - (stack_len % 4);
+	for (int i = 0; i < align; i++){
+	  *esp -= sizeof(unsigned char);
+	  **(unsigned char **)esp = 0;
+	}
+  }
+
+  //push null
+  *esp -= 4;
+  *(uint32_t *)*esp = 0;
+
+  //push address parse[i]
+  for (int i = count-1; i>=0; i--){
+	*esp -= 4;
+	*(uint32_t *)*esp = parse[i];
+  }
+
+  char *addr_parse = *esp;
+
+  //push address parse
+  *esp -= 4;
+  *(uint32_t *)*esp = addr_parse;
+
+  //push num_token
+  *esp -= 4;
+  *(uint32_t *)*esp = count;
+
+  //push fake return address
+  *esp -= 4;
+  *(uint32_t *)*esp = 0;
+}
+
+
+
+
+
 
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
@@ -88,7 +198,24 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  //return -1;
+  struct thread *cur = thread_current();
+  struct list_elem *e = NULL;
+  struct thread *child_temp = NULL;
+  int exit_status;
+ 
+  for ( e = list_begin(&(cur -> child)); e != list_end(&(cur->child)); e = list_next(e)){
+	child_temp = list_entry (e, struct thread, child_elem);
+	if (child_tid == child_temp -> tid){
+	  sema_down (&(child_temp -> child_lock));
+	  exit_status = child_temp -> exit_status;
+	  list_remove (&(child_temp -> child_elem));
+	  sema_up (&(child_temp -> memory_lock));
+	  return exit_status;
+    }
+  }  
   return -1;
+
 }
 
 /* Free the current process's resources. */
@@ -96,7 +223,7 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  uint32_t *pd;
+  uint32_t *pd;  
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -114,6 +241,15 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  ////modified for user program
+  int fd;
+  for(int i=2; i<cur->next_fd; i++){
+	file_close(cur->fdt[i]);
+  }	
+
+  sema_up(&(cur->child_lock));
+  sema_down(&(cur->memory_lock));
 }
 
 /* Sets up the CPU for running user code in the current
@@ -228,7 +364,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
-
+  
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -310,8 +446,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
+ 
  done:
   /* We arrive here whether the load is successful or not. */
+ 
   file_close (file);
   return success;
 }
