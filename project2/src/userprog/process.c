@@ -17,11 +17,28 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
-//modified
-#include "lib/user/syscall.h"
+//#include "threads/synch.h"
+#include "syscall.h"
 
+/* My code here */
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+struct child_process_status*
+get_child_status(int tid)
+{
+  struct list_elem *e;
+  struct thread *cur = thread_current();
+  struct child_process_status* child_status = NULL;
+  for (e = list_begin (&cur->child_status); e != list_end (&cur->child_status); e = list_next(e))
+  {
+    child_status = list_entry (e, struct child_process_status, elem);
+    if(child_status->tid == tid)return child_status;
+  }
+  return NULL;
+}
+/*== My code here */
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -30,51 +47,69 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
+  //printf("%d execute %s\n",thread_current()->tid,file_name);
   char *fn_copy;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  fn_copy = malloc(strlen(file_name)+1);
+  if (fn_copy == NULL)return TID_ERROR;
+  strlcpy (fn_copy, file_name, strlen(file_name)+1);
+  
+  /* My code here */
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a page fault*/
+  char *token = malloc(strlen(file_name)+1);
+
+  if(token == NULL)
+  {
+    free(fn_copy);
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
-
-  char* save_ptr;
-  char* token = strtok_r(file_name, " ", &save_ptr);
-
-  if (filesys_open(token)==NULL){
-	palloc_free_page(fn_copy);
-	return -1;
   }
+  strlcpy (token,file_name, strlen(file_name)+1);
+  /*== My code here */
+
+
 
   /* Create a new thread to execute FILE_NAME. */
-  struct thread *cur = thread_current();
+  char *save_ptr = NULL;
+  token = strtok_r(token," ",&save_ptr);
   tid = thread_create (token, PRI_DEFAULT, start_process, fn_copy);
-  sema_down (& cur -> exec_lock);
+  free(token);
 
   if (tid == TID_ERROR){
-    palloc_free_page (fn_copy);
+    free(fn_copy); 
+    return tid;
   }
 
-  struct list_elem *e = NULL;
-  struct thread *child_temp = NULL;
-
-  for (e = list_begin(& (cur -> child)); e != list_end(&(cur->child)); e = list_next(e)){
-	child_temp = list_entry (e, struct thread, child_elem);
-	if ( child_temp -> exit_status == -1 )
-		return process_wait (tid);
+  /* My code here */
+  /* Create succesfully */
+  //printf("%d create %d success\n",thread_current()->tid,tid);
+  struct child_process_status *child_status = get_child_status(tid);
+  while(child_status->loaded == 0)
+  {
+    //printf("tid:%d wait tid:%d to load\n",thread_current()->tid,child_status->child->tid);
+    sema_down(&thread_current()->sema);                          /* Block, wait for the child process to finish loaded */
   }
-
-  return tid;
+  if(child_status->loaded == -1)                          /* The child process has been loaded */
+  {
+    //printf("%d wake up,child %d loaded failed, ret_status:%d\n",thread_current()->tid,tid,child_status->ret_status);
+    return -1;
+  }
+  //printf("%d wake up,%d is still running, return tid:%d\n",thread_current()->tid,tid,tid);
+  return tid; 
 }
+/*== My code here */
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
 start_process (void *file_name_)
 {
+  
   char *file_name = file_name_;
+  //printf("tid:%d , name:%s , start process\n",thread_current()->tid,file_name,file_name);
   struct intr_frame if_;
   bool success;
 
@@ -83,47 +118,65 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  
-  //parse to token!!
-  char file_name_use[128];
-  
-  strlcpy(file_name_use, file_name, strlen(file_name)+1);
-  int num_token = 0;
-  char *token, *save_ptr;
 
-  for (token = strtok_r (file_name_use, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)){
-	num_token ++;
-  }
-  
-  char **token_array = (char **)malloc(sizeof(char *)* num_token);
-  strlcpy(file_name_use, file_name, strlen(file_name) + 1);
-  int i = 0;
-  for (token = strtok_r (file_name_use, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)){
-	token_array[i] = token;
-	i++;
-  }
-  
-  success = load (token_array[0], &if_.eip, &if_.esp);
-  struct thread *cur = thread_current();
-  if(success){
-	argument_stack(token_array, num_token, &if_.esp);
-	
-	free(token_array);
+  /* My code here */
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a page fault*/
+  char *token = malloc(strlen(file_name)+1);
+  strlcpy (token,file_name, strlen(file_name)+1);
+  char *save_ptr = NULL;
+  token = strtok_r(token," ",&save_ptr);
+
+ /* Load eip and esp of the user process eip: execute instruction address esp: stack top address */
+  success = load (token, &if_.eip, &if_.esp);
+
+    /* If load failed, quit. */
+  if (!success)
+  {
+    thread_current()->relay_status->loaded = -1;
+    //printf("%d load failed , sema up parent tid:%d\n",thread_current()->tid,thread_current()->parent->tid);
+    sema_up(&thread_current()->parent->sema);
+    exit(-1);
   }
 
-  palloc_free_page (file_name);
-  //wake-up the sema_down while loop in process execute
-  sema_up (& cur->parent->exec_lock);
 
-  /* If load failed, quit. */
-  //palloc_free_page (file_name);
-  if (!success){
-	//free(file_name_use);
-	free(token_array);
-	exit(-1); 
+ /* Parameter passing */
+  char *esp =(char *)if_.esp;// Maintain the top of the stack
+  int argv[128]; // Stored parameter address
+  int argc = 0, tokenlen = 0; // argc: number of parameters tokenlen: token length
+  for( ; token != NULL; token = strtok_r(NULL, " ", &save_ptr)){
+    tokenlen = strlen(token)+1; //'(token)\0'
+    esp -= tokenlen; // decrements the stack pointer
+    strlcpy(esp, token , tokenlen+1); // right-to-left order
+    argv[argc++] = (int)esp; 
   }
+  while((int)esp % 4!=0){ // word-align
+    esp--;
+  }
+  int *tmp = (int*)esp; // Next save the argv address
+  tmp--;
+  *tmp = 0; // argv[argc+1]
+  tmp--; 
+  int i;
+  for(i=argc-1;i>=0;i--){
+    *tmp = argv[i];
+    tmp--;
+  }
+  *tmp = (int)(tmp+1); // argv
+  tmp--;
+  *tmp = argc; // argc;
+  tmp--;
+  *tmp = 0; // return address
+  if_.esp = tmp;// stack update
 
-  //hex_dump(if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
+  
+
+  free(file_name);
+  thread_current()->relay_status->loaded = 1;
+  //printf("%d load success, sema up parent tid:%d\n",thread_current()->tid,thread_current()->parent->tid);
+  sema_up(&thread_current()->parent->sema);
+  /*== My code here */
+
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -134,57 +187,6 @@ start_process (void *file_name_)
   NOT_REACHED ();
 }
 
-void argument_stack(char **parse, int count, void **esp){
-
-  int stack_len = 0;
-  int token_len;
-
-  for (int i = count-1; i>=0; i--){
-	token_len = strlen(parse[i])+1;
-	stack_len += token_len;
-	*esp -= token_len;
-	strlcpy(*esp, parse[i], token_len);
-	parse[i] = *esp;
-  }
-
-  //4Byte align
-  if (stack_len % 4 != 0){
-	int align = 4 - (stack_len % 4);
-	for (int i = 0; i < align; i++){
-	  *esp -= sizeof(unsigned char);
-	  **(unsigned char **)esp = 0;
-	}
-  }
-
-  //push null
-  *esp -= 4;
-  *(uint32_t *)*esp = 0;
-
-  //push address parse[i]
-  for (int i = count-1; i>=0; i--){
-	*esp -= 4;
-	*(uint32_t *)*esp = parse[i];
-  }
-
-  char *addr_parse = *esp;
-
-  //push address parse
-  *esp -= 4;
-  *(uint32_t *)*esp = addr_parse;
-
-  //push num_token
-  *esp -= 4;
-  *(uint32_t *)*esp = count;
-
-  //push fake return address
-  *esp -= 4;
-  *(uint32_t *)*esp = 0;
-}
-
-
-
-
-
 
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
@@ -192,30 +194,41 @@ void argument_stack(char **parse, int count, void **esp){
    child of the calling process, or if process_wait() has already
    been successfully called for the given TID, returns -1
    immediately, without waiting.
-
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  //return -1;
-  struct thread *cur = thread_current();
-  struct list_elem *e = NULL;
-  struct thread *child_temp = NULL;
-  int exit_status;
- 
-  for ( e = list_begin(&(cur -> child)); e != list_end(&(cur->child)); e = list_next(e)){
-	child_temp = list_entry (e, struct thread, child_elem);
-	if (child_tid == child_temp -> tid){
-	  sema_down (&(child_temp -> child_lock));
-	  exit_status = child_temp -> exit_status;
-	  list_remove (&(child_temp -> child_elem));
-	  sema_up (&(child_temp -> memory_lock));
-	  return exit_status;
-    }
-  }  
-  return -1;
-
+  /* My code here */
+  //printf("%d process wait %d\n",thread_current()->tid,child_tid);
+  if(child_tid == TID_ERROR)
+  {
+    //printf("%d TID invalid\n",child_tid);
+    return -1;            /* TID invalid */
+  }
+  struct child_process_status *child_status = get_child_status(child_tid);
+  if(child_status == NULL)
+  {
+    //printf("%d No child_status\n",child_tid);
+    return -1;              /* not child_tid */
+  }
+  if(child_status->iswaited)
+  {
+    //printf("%d Is being waited\n",child_tid);
+    return -1;
+  }
+  child_status->iswaited = true;
+  while(!child_status->finish)
+  {
+    //printf("%d sema down , waits for %d\n",thread_current()->tid,child_tid);
+    sema_down(&thread_current()->sema);
+  }
+  //printf("%d wait over , now free child_status->tid:%d , return %d\n",thread_current()->tid,child_tid,child_status->ret_status);
+  int res = child_status->ret_status;
+  list_remove(&child_status->elem);
+  free(child_status);
+  return res;
+  /*== My code here */
 }
 
 /* Free the current process's resources. */
@@ -223,10 +236,11 @@ void
 process_exit (void)
 {
   struct thread *cur = thread_current ();
-  uint32_t *pd;  
-
+  uint32_t *pd;
+  
   /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
+    to the kernel-only page directory. */
+
   pd = cur->pagedir;
   if (pd != NULL) 
     {
@@ -241,15 +255,6 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-
-  ////modified for user program
-  int fd;
-  for(int i=2; i<cur->next_fd; i++){
-	file_close(cur->fdt[i]);
-  }	
-
-  sema_up(&(cur->child_lock));
-  sema_down(&(cur->memory_lock));
 }
 
 /* Sets up the CPU for running user code in the current
@@ -344,6 +349,7 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
 bool
 load (const char *file_name, void (**eip) (void), void **esp) 
 {
+  //printf("%s start loading\n",file_name);
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
   struct file *file = NULL;
@@ -355,16 +361,16 @@ load (const char *file_name, void (**eip) (void), void **esp)
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
-  process_activate ();
 
+  process_activate ();
   /* Open executable file. */
+  lock_acquire(&file_lock);
   file = filesys_open (file_name);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
-  
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
       || memcmp (ehdr.e_ident, "\177ELF\1\1\1", 7)
@@ -377,7 +383,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: error loading executable\n", file_name);
       goto done; 
     }
-
   /* Read program headers. */
   file_ofs = ehdr.e_phoff;
   for (i = 0; i < ehdr.e_phnum; i++) 
@@ -436,21 +441,28 @@ load (const char *file_name, void (**eip) (void), void **esp)
           break;
         }
     }
-
   /* Set up stack. */
   if (!setup_stack (esp))
     goto done;
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
   success = true;
 
- 
  done:
+ /* My code here */
   /* We arrive here whether the load is successful or not. */
- 
-  file_close (file);
+  if(success)
+  {
+    t->execfile = file;
+    file_deny_write(file);
+  }
+  else
+  {
+    file_close(file);
+  }
+  lock_release(&file_lock);
+  /*== My code here */
   return success;
 }
 
@@ -506,15 +518,11 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
 /* Loads a segment starting at offset OFS in FILE at address
    UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
    memory are initialized, as follows:
-
         - READ_BYTES bytes at UPAGE must be read from FILE
           starting at offset OFS.
-
         - ZERO_BYTES bytes at UPAGE + READ_BYTES must be zeroed.
-
    The pages initialized by this function must be writable by the
    user process if WRITABLE is true, read-only otherwise.
-
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
@@ -575,7 +583,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        *esp = PHYS_BASE - 12;
       else
         palloc_free_page (kpage);
     }

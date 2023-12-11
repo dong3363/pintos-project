@@ -4,10 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-//modified
-#include "threads/synch.h"
-#include "filesys/file.h"
-
+#include "synch.h"
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -20,7 +17,6 @@ enum thread_status
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
 typedef int tid_t;
-
 #define TID_ERROR ((tid_t) -1)          /* Error value for tid_t. */
 
 /* Thread priorities. */
@@ -29,13 +25,11 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 
 /* A kernel thread or user process.
-
    Each thread structure is stored in its own 4 kB page.  The
    thread structure itself sits at the very bottom of the page
    (at offset 0).  The rest of the page is reserved for the
    thread's kernel stack, which grows downward from the top of
    the page (at offset 4 kB).  Here's an illustration:
-
         4 kB +---------------------------------+
              |          kernel stack           |
              |                |                |
@@ -57,22 +51,18 @@ typedef int tid_t;
              |               name              |
              |              status             |
         0 kB +---------------------------------+
-
    The upshot of this is twofold:
-
       1. First, `struct thread' must not be allowed to grow too
          big.  If it does, then there will not be enough room for
          the kernel stack.  Our base `struct thread' is only a
          few bytes in size.  It probably should stay well under 1
          kB.
-
       2. Second, kernel stacks must not be allowed to grow too
          large.  If a stack overflows, it will corrupt the thread
          state.  Thus, kernel functions should not allocate large
          structures or arrays as non-static local variables.  Use
          dynamic allocation with malloc() or palloc_get_page()
          instead.
-
    The first symptom of either of these problems will probably be
    an assertion failure in thread_current(), which checks that
    the `magic' member of the running thread's `struct thread' is
@@ -84,14 +74,8 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-
-struct signal{
-	int signum;
-	void (*sig_handler)(void);
-};
-
-
-struct thread{
+struct thread
+  {
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
     enum thread_status status;          /* Thread state. */
@@ -103,41 +87,34 @@ struct thread{
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
-#ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    //Making Child list!!!
-
-	struct thread *parent;
-	struct list child;
-	struct list_elem child_elem;
-
-	struct semaphore child_lock;
-	struct semaphore memory_lock;
-	struct semaphore exec_lock;	
-	
-	//Project 2 User program
-	struct file *fdt[64];
-	int next_fd;
-
-	struct signal *save_signal[10];
-
-	int exit_status;
-
-
-#endif
+    int ret;                            /* exit status */  
+    struct semaphore sema;              /* The child process will wait on the semaphore */
+    struct thread *parent;              /* Parent process */
+    struct list fd_list;                /* Owned file descriptor */
+    struct list child_status;           /* The child process status list, so that the parent process can also obtain the status of the child process after the child process ends */  
+    struct child_process_status *relay_status;
+    struct file *execfile; 
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-};
+  };
 
+struct child_process_status 
+{
+   int ret_status;  
+   int tid;               
+   struct thread* child;  
+   bool finish;                 
+   bool iswaited;                   /* if process_wait() has already been successfully called for the given TID, returns -1 immediately, without waiting. */
+   int loaded; 
+   struct list_elem elem;           /* elem for child_status */
+};
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-//extra
-void sendsig_thread(tid_t pid, int signum);
-
 
 void thread_init (void);
 void thread_start (void);
@@ -170,4 +147,6 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+struct thread* get_thread_by_tid(tid_t tid);
+struct thread* get_child_by_tid(struct list *,tid_t);
 #endif /* threads/thread.h */

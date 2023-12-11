@@ -1,10 +1,9 @@
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 
-#include "lib/user/syscall.h"
-
+typedef int pid_t;
+struct lock file_lock;
 void syscall_init (void);
-
-struct lock filesys_lock;
+void exit(int);
 
 #endif /* userprog/syscall.h */
