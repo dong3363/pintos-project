@@ -653,51 +653,6 @@ thread_hold_the_lock(struct lock *lock)
   intr_set_level (old_level);
 }
 
-/* Remove a lock. */
-void
-thread_remove_lock (struct lock *lock)
-{
-  enum intr_level old_level = intr_disable ();
-  list_remove (&lock->elem);
-  thread_update_priority (thread_current ());
-  intr_set_level (old_level);
-}
-
-/* Donate current priority to thread t. */
-void
-thread_donate_priority (struct thread *t)
-{
-  enum intr_level old_level = intr_disable ();
-  thread_update_priority (t);
-
-  if (t->status == THREAD_READY)
-  {
-    list_remove (&t->elem);
-     list_insert_ordered (&ready_list, &t->elem, thread_cmp_priority, NULL);
-  }
-  intr_set_level (old_level);
-}
-
-/* Update priority. */
-void
-thread_update_priority (struct thread *t)
-{
-  enum intr_level old_level = intr_disable ();
-  int max_priority = t->base_priority;
-  int lock_priority;
-
-  if (!list_empty (&t->locks))
-  {
-    list_sort (&t->locks, lock_cmp_priority, NULL);
-    lock_priority = list_entry (list_front (&t->locks), struct lock, elem)->max_priority;
-    if (lock_priority > max_priority)
-      max_priority = lock_priority;
-  }
-
-  t->priority = max_priority;
-  intr_set_level (old_level);
-}
-
 /* Increase recent_cpu by 1. */
 void
 thread_mlfqs_increase_recent_cpu_by_one (void)
