@@ -150,7 +150,6 @@ void blocked_thread_check (struct thread *t, void *aux UNUSED);
 bool thread_cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 void thread_hold_the_lock (struct lock *);
 void thread_remove_lock (struct lock *);
-void thread_donate_priority (struct thread *);
 void thread_update_priority (struct thread *);
 void thread_mlfqs_increase_recent_cpu_by_one (void);
 void thread_mlfqs_update_priority (struct thread *);
