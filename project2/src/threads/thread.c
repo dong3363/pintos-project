@@ -314,7 +314,7 @@ thread_exit (void)
 
   /* My code here */
   struct thread *cur = thread_current();
-  printf ("%s: exit(%d)\n",cur->name, cur->ret); /* 输出进程name以及进程return值 */ 
+  printf ("%s: exit(%d)\n",cur->name, cur->ret);
   if(cur->parent!=NULL)
   {
     cur->relay_status->ret_status = cur->ret;
