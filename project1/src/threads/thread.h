@@ -105,7 +105,6 @@ struct thread
     int64_t ticks_blocked;              /* Record the time the thread has been blocked. */
     int base_priority;                  /* Base priority. */
     struct list locks;                  /* Locks that the thread is holding. */
-    struct lock *lock_waiting;          /* The lock that the thread is waiting for. */
     int nice;                           /* Niceness. */
     fixed_t recent_cpu;                 /* Recent CPU. */
   };

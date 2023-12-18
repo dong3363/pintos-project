@@ -494,7 +494,6 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->base_priority = priority;
   list_init (&t->locks);
-  t->lock_waiting = NULL;
   t->nice = 0;
   t->recent_cpu = FP_CONST (0);
   t->magic = THREAD_MAGIC;
@@ -635,22 +634,6 @@ bool
 thread_cmp_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
   return list_entry(a, struct thread, elem)->priority > list_entry(b, struct thread, elem)->priority;
-}
-
-/* Let thread hold a lock */
-void
-thread_hold_the_lock(struct lock *lock)
-{
-  enum intr_level old_level = intr_disable ();
-  list_insert_ordered (&thread_current ()->locks, &lock->elem, lock_cmp_priority, NULL);
-
-  if (lock->max_priority > thread_current ()->priority)
-  {
-    thread_current ()->priority = lock->max_priority;
-    thread_yield ();
-  }
-
-  intr_set_level (old_level);
 }
 
 /* Increase recent_cpu by 1. */
